@@ -45,6 +45,9 @@ using VoteMonitor.Api.Core.Options;
 using VoteMonitor.Api.DataExport.Controller;
 using VoteMonitor.Api.Statistics.Controllers;
 using VotingIrregularities.Api.Extensions.Startup;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using VotingIrregularities.Api.HealthChecks;
+using HealthChecks.UI.Client;
 
 namespace VotingIrregularities.Api
 {
@@ -86,15 +89,15 @@ namespace VotingIrregularities.Api
             // Get options from app settings
             services.AddOptions();
             services.ConfigureCustomOptions(Configuration);
-           
+
             services.ConfigureVoteMonitorAuthentication(Configuration);
             services.AddApplicationInsightsTelemetry(Configuration);
             services.AddMvc(config =>
                 {
-                    config.Filters.Add(new AuthorizeFilter( new AuthorizationPolicyBuilder()
+                    config.Filters.Add(new AuthorizeFilter(new AuthorizationPolicyBuilder()
                                                                         .RequireAuthenticatedUser()
                                                                         .RequireClaim(ClaimsHelper.IdNgo)
-                                                                        .Build())); 
+                                                                        .Build()));
                 })
                 .AddApplicationPart(typeof(PollingStationController).Assembly)
                 .AddApplicationPart(typeof(ObserverController).Assembly)
@@ -146,18 +149,22 @@ namespace VotingIrregularities.Api
 
             ConfigureCache(services);
             ConfigureFileLoader();
-
+            services.AddHealthChecks()
+                .AddSqlServer(Configuration["ConnectionStrings:DefaultConnection"])
+                .AddRedis(Configuration["RedisCacheOptions:Configuration"])
+                .AddCheck<CacheHealthCheck>("Cache")
+                .AddCheck<FirebaseHealthCheck>("Firebase");
             services.AddCors(options => options.AddPolicy("Permissive", builder =>
             {
-	            builder.AllowAnyOrigin()
-		            .AllowAnyMethod()
-		            .AllowAnyHeader();
+                builder.AllowAnyOrigin()
+                    .AllowAnyMethod()
+                    .AllowAnyHeader();
             }));
 
-		}
+        }
 
-		// This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-		public void Configure(IApplicationBuilder app,
+        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
+        public void Configure(IApplicationBuilder app,
             IApplicationLifetime appLifetime)
         {
             app.UseStaticFiles();
@@ -215,8 +222,13 @@ namespace VotingIrregularities.Api
 
             // Enable middleware to serve swagger-ui assets (HTML, JS, CSS etc.)
             app.UseSwaggerUI(o => o.SwaggerEndpoint("/swagger/v1/swagger.json", "MV API v1"));
+            app.UseHealthChecks("/health", new HealthCheckOptions()
+            {
+                Predicate = _ => true,
+                ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+            });
             app.UseCors("Permissive");
-			app.UseMvc();
+            app.UseMvc();
         }
 
         private void RegisterOptionsInSimpleInjector(IApplicationBuilder app)
@@ -300,7 +312,7 @@ namespace VotingIrregularities.Api
         private void RegisterServices(IApplicationBuilder app)
         {
             _container.Register<IPollingStationService, PollingStationService>(Lifestyle.Scoped);
-            
+
         }
 
         private void InitializeContainer(IApplicationBuilder app)
